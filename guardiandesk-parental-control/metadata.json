@@ -1,0 +1,6 @@
+{
+  "name": "GuardianDesk Parental Control",
+  "description": "A comprehensive parental control and digital wellbeing dashboard for monitoring family devices, managing screen time, content rules, and real-time activity oversight.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+.env
+.env.local
+.env*.local
+device.dat
+guardiandesk-setup.exe
+guardiandesk-agent-win.exe
+.DS_Store

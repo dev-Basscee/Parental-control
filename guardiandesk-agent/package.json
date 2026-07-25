@@ -1,0 +1,35 @@
+{
+  "name": "guardiandesk-agent",
+  "version": "1.0.0",
+  "description": "GuardianDesk parental control background agent for Windows",
+
+  "main": "setup.js",
+
+  "scripts": {
+    "setup":     "node setup.js",
+    "uninstall": "node uninstall.js",
+
+    "dev-agent": "node agent.js"
+  },
+
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv":                "^16.4.5",
+    "node-windows":          "^1.0.0-beta.8"
+  },
+
+  "bin": {
+    "guardiandesk-setup": "./setup.js"
+  },
+
+  "pkg": {
+    "scripts":  ["lib/**/*.js", "config.js", "agent.js"],
+    "assets":   [".env"],
+    "targets":  ["node18-win-x64"],
+    "outputPath": "dist"
+  },
+
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

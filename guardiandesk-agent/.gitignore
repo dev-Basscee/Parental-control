@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+.env
+device.dat
+guardiandesk-setup.exe
+guardiandesk-agent-win.exe
