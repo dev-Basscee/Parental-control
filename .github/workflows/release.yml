@@ -94,21 +94,28 @@ jobs:
           Write-Host "Setup exe ready: dist/$setupName"
           "SETUP_NAME=$setupName" >> $env:GITHUB_ENV
 
-      # ── 8. Verify both exes exist ──────────────────────────────────────────
+      # ── 8. Build the uninstall exe ──────────────────────────────────────────
+      # Ship uninstall.js as its own pkg exe so parents have a working uninstall.
+      - name: Build guardiandesk-uninstall.exe
+        working-directory: guardiandesk-agent
+        run: pkg uninstall.js --targets node22-win-x64 --compress GZip --output dist/guardiandesk-uninstall.exe
+
+      # ── 9. Verify all three exes exist ──────────────────────────────────────
       - name: Verify dist output
         working-directory: guardiandesk-agent
         shell: pwsh
         run: |
-          $setup = "dist\$env:SETUP_NAME"
-          $agent = "dist\guardiandesk-agent.exe"
-          if (-not (Test-Path $setup)) { Write-Error "MISSING: $setup"; exit 1 }
-          if (-not (Test-Path $agent)) { Write-Error "MISSING: $agent"; exit 1 }
-          $sb = (Get-Item $setup).Length
-          $ab = (Get-Item $agent).Length
-          Write-Host "OK: $setup ($sb bytes)"
-          Write-Host "OK: $agent ($ab bytes)"
+          $setup     = "dist\$env:SETUP_NAME"
+          $agent     = "dist\guardiandesk-agent.exe"
+          $uninstall = "dist\guardiandesk-uninstall.exe"
+          if (-not (Test-Path $setup))     { Write-Error "MISSING: $setup"; exit 1 }
+          if (-not (Test-Path $agent))     { Write-Error "MISSING: $agent"; exit 1 }
+          if (-not (Test-Path $uninstall)) { Write-Error "MISSING: $uninstall"; exit 1 }
+          Write-Host "OK: $setup ($((Get-Item $setup).Length) bytes)"
+          Write-Host "OK: $agent ($((Get-Item $agent).Length) bytes)"
+          Write-Host "OK: $uninstall ($((Get-Item $uninstall).Length) bytes)"
 
-      # ── 9. Create GitHub Release and upload both exes ──────────────────────
+      # ── 10. Create GitHub Release and upload all three exes ────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -118,17 +125,17 @@ jobs:
             ## GuardianDesk Agent ${{ github.ref_name }}
 
             ### Installation (child's PC)
-            1. Download **both** files below into the **same folder** (e.g. `C:\GuardianDesk\`):
+            1. Download **all three** files below into the **same folder** (e.g. `C:\GuardianDesk\`):
                - `GuardianDesk-Setup-${{ github.ref_name }}.exe`
                - `guardiandesk-agent.exe`
+               - `guardiandesk-uninstall.exe`
             2. Right-click `GuardianDesk-Setup-${{ github.ref_name }}.exe` → **Run as Administrator**.
             3. Open the GuardianDesk dashboard on the parent device, go to **Devices → Pair New Device** and copy the 6-digit code.
             4. Enter the code when the setup wizard prompts you.
             5. The agent installs as a Windows Service and starts automatically on every boot.
 
-            > **Why two files?** `guardiandesk-agent.exe` is the headless background service.
-            > The setup wizard locates it next to itself on disk and registers it with Windows.
-            > Both files must be in the same directory.
+            > **Why three files?** The setup wizard registers `guardiandesk-agent.exe` (the
+            > headless service) with Windows via nssm. All three must be in the same folder.
 
             ### Requirements
             - Windows 10 / 11 (64-bit)
@@ -136,12 +143,17 @@ jobs:
             - Active GuardianDesk parent account
 
             ### Uninstalling
-            Open an **Administrator PowerShell** and run:
+            Download `guardiandesk-uninstall.exe` (attached below) into the
+            same folder as the other two files, then run it as Administrator:
             ```powershell
-            & "C:\Program Files\GuardianDesk\uninstall.bat"
+            & ".\guardiandesk-uninstall.exe"
             ```
+            This stops and removes the Windows Service, deletes the
+            `GuardianDesk_Block_*` firewall rules, and removes the stored
+            credentials and log files.
           files: |
             guardiandesk-agent/dist/GuardianDesk-Setup-${{ github.ref_name }}.exe
             guardiandesk-agent/dist/guardiandesk-agent.exe
+            guardiandesk-agent/dist/guardiandesk-uninstall.exe
           draft: false
           prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}

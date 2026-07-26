@@ -13,8 +13,7 @@
 
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
-    "dotenv":                "^16.4.5",
-    "node-windows":          "^1.0.0-beta.8"
+    "dotenv":                "^16.4.5"
   },
 
   "bin": {
@@ -24,7 +23,7 @@
 
   "pkg": {
     "scripts":    ["lib/**/*.js", "config.js"],
-    "assets":     [".env"],
+    "assets":     [".env", "vendor/nssm64.exe"],
     "targets":    ["node22-win-x64"],
     "outputPath": "dist"
   },

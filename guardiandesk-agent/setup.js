@@ -51,9 +51,8 @@ process.on('uncaughtException', (err) => {
 });
 
 // ── Now safe to require modules — any throw is caught above ────────────────
-const path     = require('path');
-const { exec } = require('child_process');
-const util     = require('util');
+const path = require('path');
+const fs   = require('fs');
 
 // ---------------------------------------------------------------------------
 // resolveAgentPath — locate agent.js / guardiandesk-agent.exe correctly
@@ -77,12 +76,10 @@ function resolveAgentPath() {
   return path.join(__dirname, 'agent.js');
 }
 
-const { Service }        = require('node-windows');
 const tokenStore         = require('./lib/tokenStore');
 const { pairDevice }     = require('./lib/pairing');
 const { configWarnings } = require('./config');
-
-const execAsync = util.promisify(exec);
+const serviceManager     = require('./lib/serviceManager');
 
 // ---------------------------------------------------------------------------
 // Console helpers (only used here — never imported by agent.js)
@@ -118,72 +115,47 @@ function readLine(prompt) {
   });
 }
 
-/**
- * Configure Windows Service failure/recovery via sc.exe.
- */
-async function configureServiceRecovery() {
-  const cmd =
-    'sc failure GuardianDeskAgent reset=3600 ' +
-    'actions=restart/5000/restart/10000/restart/30000';
-  try {
-    await execAsync(cmd, { windowsHide: true });
-    printOk('Service auto-restart on crash configured.');
-  } catch (err) {
-    printWarn(`Could not configure auto-restart: ${err.message}`);
-    printWarn('Set it manually: services.msc \u2192 GuardianDeskAgent \u2192 Recovery tab.');
-  }
-}
-
 // ---------------------------------------------------------------------------
 // STEP C — Install Windows Service
 // ---------------------------------------------------------------------------
 
-function installAndStartService() {
-  return new Promise((resolve, reject) => {
-    const svc = new Service({
-      name:        'GuardianDeskAgent',
-      description: 'GuardianDesk parental control background agent. ' +
-                   'Enforces rules set by the parent dashboard on this device.',
-      script: resolveAgentPath(),
-      env: [
-        { name: 'SUPABASE_URL',         value: process.env.SUPABASE_URL         || '' },
-        { name: 'SUPABASE_ANON_KEY',    value: process.env.SUPABASE_ANON_KEY    || '' },
-        { name: 'SUPABASE_SERVICE_KEY', value: process.env.SUPABASE_SERVICE_KEY || '' },
-      ],
-    });
+async function installAndStartService() {
+  const agentExePath = resolveAgentPath();
 
-    svc.on('install', () => {
-      printOk('Windows Service registered.');
-      svc.start();
-    });
+  if (!fs.existsSync(agentExePath)) {
+    throw new Error(
+      `guardiandesk-agent.exe not found at ${agentExePath}. ` +
+      'Make sure it is in the same folder as this setup exe.'
+    );
+  }
 
-    svc.on('start', async () => {
-      printOk('GuardianDeskAgent service started.');
-      await configureServiceRecovery();
-      println('');
-      println('\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557');
-      println('\u2551  \u2705  GuardianDesk is now running in the background.  \u2551');
-      println('\u2551      You can safely close this window.               \u2551');
-      println('\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D');
-      println('');
-      println('  The agent will start automatically every time this PC boots.');
-      println('  Check the parent dashboard to confirm this device is online.');
-      println('');
-      resolve();
-    });
+  const alreadyInstalled = await serviceManager.isServiceInstalled();
 
-    svc.on('alreadyinstalled', () => {
-      printOk('Service is already installed.');
-      println('  Ensuring it is started...');
-      svc.start();
-    });
-
-    svc.on('error', (err) => {
-      reject(new Error(`Service installation error: ${err}`));
-    });
-
-    svc.install();
+  await serviceManager.installService({
+    agentExePath,
+    env: {
+      SUPABASE_URL:         process.env.SUPABASE_URL         || '',
+      SUPABASE_ANON_KEY:    process.env.SUPABASE_ANON_KEY    || '',
+      SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || '',
+    },
   });
+  printOk(alreadyInstalled
+    ? 'Service is already installed \u2014 re-verified configuration.'
+    : 'Windows Service registered (via nssm).');
+
+  println('  Ensuring it is started...');
+  await serviceManager.startService();
+  printOk('GuardianDeskAgent service started.');
+
+  println('');
+  println('\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557');
+  println('\u2551  \u2705  GuardianDesk is now running in the background.  \u2551');
+  println('\u2551      You can safely close this window.               \u2551');
+  println('\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D');
+  println('');
+  println('  The agent will start automatically every time this PC boots.');
+  println('  Check the parent dashboard to confirm this device is online.');
+  println('');
 }
 
 // ---------------------------------------------------------------------------

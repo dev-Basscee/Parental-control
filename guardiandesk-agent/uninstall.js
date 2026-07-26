@@ -19,9 +19,9 @@
  * remains in Services, the Firewall, or the filesystem.
  */
 
-const path     = require('path');
-const fs       = require('fs');
-const { Service } = require('node-windows');
+const path = require('path');
+const fs   = require('fs');
+const serviceManager = require('./lib/serviceManager');
 
 const { removeAllGuardianDeskFirewallRules } = require('./lib/enforcer');
 const { deleteToken, TOKEN_FILE }            = require('./lib/tokenStore');
@@ -33,32 +33,14 @@ const { deleteToken, TOKEN_FILE }            = require('./lib/tokenStore');
 async function uninstall() {
   console.log('[uninstall] Starting GuardianDesk cleanup…\n');
 
-  // Step 1: Stop and unregister the Windows Service
-  // The service script path must match what was registered in setup.js.
-  const svc = new Service({
-    name:   'GuardianDeskAgent',
-    script: path.join(__dirname, 'agent.js'),
-  });
-
-  await new Promise((resolve) => {
-    svc.on('uninstall', () => {
-      console.log('[uninstall] ✓ Windows Service removed.');
-      resolve();
-    });
-
-    svc.on('error', (err) => {
-      // Non-fatal — continue cleanup even if the service wasn't registered
-      console.warn(`[uninstall] Service removal warning: ${err}`);
-      resolve();
-    });
-
-    svc.on('alreadyuninstalled', () => {
-      console.log('[uninstall] Service was not installed (already removed or never set up).');
-      resolve();
-    });
-
-    svc.uninstall();
-  });
+  // Step 1: Stop and unregister the Windows Service (registered via nssm —
+  // see lib/serviceManager.js for why node-windows can't manage this service).
+  try {
+    await serviceManager.removeService();
+    console.log('[uninstall] ✓ Windows Service removed (or was not installed).');
+  } catch (err) {
+    console.warn(`[uninstall] Service removal warning: ${err.message}`);
+  }
 
   // Step 2: Remove all GuardianDesk_Block_* Windows Firewall rules
   console.log('[uninstall] Removing firewall rules…');
