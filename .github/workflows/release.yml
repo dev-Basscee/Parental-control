@@ -57,6 +57,19 @@ jobs:
       # package.json so dotenv can read it at runtime inside either .exe.
       # Values come from GitHub Actions Secrets — set them at:
       #   Repository → Settings → Secrets and variables → Actions
+      - name: Validate secrets are set
+        shell: pwsh
+        run: |
+          $missing = @()
+          if (-not "${{ secrets.SUPABASE_URL }}")         { $missing += "SUPABASE_URL" }
+          if (-not "${{ secrets.SUPABASE_ANON_KEY }}")    { $missing += "SUPABASE_ANON_KEY" }
+          if (-not "${{ secrets.SUPABASE_SERVICE_KEY }}") { $missing += "SUPABASE_SERVICE_KEY" }
+          if ($missing.Count -gt 0) {
+            Write-Error "❌ Missing GitHub Actions secrets: $($missing -join ', '). Go to Settings → Secrets and variables → Actions and add them before tagging."
+            exit 1
+          }
+          Write-Host "✅ All three Supabase secrets are present."
+
       - name: Write embedded .env for pkg
         working-directory: guardiandesk-agent
         shell: pwsh
@@ -64,7 +77,12 @@ jobs:
           $envPath = Join-Path (Get-Location) ".env"
           $envContent = "SUPABASE_URL=${{ secrets.SUPABASE_URL }}`nSUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}`nSUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"
           [System.IO.File]::WriteAllText($envPath, $envContent)
+          $written = Get-Content $envPath -Raw
+          # Print sizes so CI log shows the .env was written with real content
           Write-Host "Written .env ($((Get-Item $envPath).Length) bytes)"
+          Write-Host "  SUPABASE_URL length:         $("${{ secrets.SUPABASE_URL }}".Length)"
+          Write-Host "  SUPABASE_ANON_KEY length:    $("${{ secrets.SUPABASE_ANON_KEY }}".Length)"
+          Write-Host "  SUPABASE_SERVICE_KEY length: $("${{ secrets.SUPABASE_SERVICE_KEY }}".Length)"
 
       # ── 5. Install @yao-pkg/pkg ────────────────────────────────────────────
       # pkg@5 (Vercel) is abandoned — CDN no longer hosts node18+ binaries.
