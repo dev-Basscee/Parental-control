@@ -1,0 +1,145 @@
+name: Build & Release GuardianDesk Agent
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggers:
+#   • Push a tag like  v1.2.3  → builds a Windows installer and creates a
+#     GitHub Release with the installer .exe attached.
+#   • Manual workflow_dispatch (useful for testing the pipeline without a tag).
+#
+# Required GitHub Actions Secrets (repo Settings → Secrets and variables → Actions):
+#   SUPABASE_URL          — https://<project-ref>.supabase.co
+#   SUPABASE_ANON_KEY     — anon/public key
+#   SUPABASE_SERVICE_KEY  — service-role key (Realtime only)
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create releases and upload assets
+
+jobs:
+  build-and-release:
+    name: Build installer on Windows
+    runs-on: windows-latest   # MUST be Windows — pkg produces platform-specific binaries
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Setup Node.js ───────────────────────────────────────────────────
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: guardiandesk-agent/package-lock.json
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install npm dependencies
+        working-directory: guardiandesk-agent
+        run: npm ci
+
+      # ── 4. Embed Supabase credentials into .env ────────────────────────────
+      # The .env is bundled into the pkg snapshot via the "assets" field in
+      # package.json so dotenv can read it at runtime inside the .exe.
+      # Values come from GitHub Actions Secrets — set them at:
+      #   Repository → Settings → Secrets and variables → Actions
+      - name: Write embedded .env for pkg
+        working-directory: guardiandesk-agent
+        shell: pwsh
+        run: |
+          @"
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}
+          "@ | Set-Content .env
+
+      # ── 5. Install pkg globally ────────────────────────────────────────────
+      - name: Install pkg
+        run: npm install -g pkg@5
+
+      # ── 6. Build the standalone .exe ───────────────────────────────────────
+      # pkg reads the "pkg" field from package.json:
+      #   main/entry: setup.js  (interactive pairing + service install)
+      #   scripts:    agent.js + lib/**  (bundled so the service can spawn them)
+      #   assets:     .env              (bundled so dotenv can read it at runtime)
+      #   targets:    node18-win-x64
+      #   outputPath: dist/
+      # The output binary is:  guardiandesk-agent/dist/guardiandesk-agent.exe
+      - name: Build agent exe with pkg
+        working-directory: guardiandesk-agent
+        run: pkg . --compress GZip
+
+      # ── 7. Build self-extracting installer ─────────────────────────────────
+      # Combine guardiandesk-agent.exe + setup.ps1 into one self-extracting
+      # .exe using the 7-Zip SFX module (pre-installed on windows-latest).
+      # Parents download ONE file: GuardianDesk-Setup-<version>.exe
+      - name: Bundle self-extracting installer
+        working-directory: guardiandesk-agent
+        shell: pwsh
+        run: |
+          $7z       = "C:\Program Files\7-Zip\7z.exe"
+          $sfxMod   = "C:\Program Files\7-Zip\7z.sfx"
+          $version  = "${{ github.ref_name }}"
+          if (-not $version) { $version = "dev" }
+          $outName  = "GuardianDesk-Setup-${version}.exe"
+
+          # Copy setup.ps1 into dist/ so it gets packed together
+          Copy-Item setup.ps1 dist\setup.ps1
+
+          # Pack agent exe + setup script into a .7z archive
+          & $7z a -t7z dist\payload.7z dist\guardiandesk-agent.exe dist\setup.ps1
+
+          # SFX config: auto-run setup.ps1 on extraction
+          $sfxCfg = @"
+          ;!@Install@!UTF-8!
+          Title="GuardianDesk Agent Setup"
+          RunProgram="powershell.exe -ExecutionPolicy Bypass -File setup.ps1"
+          ;!@InstallEnd@!
+          "@
+          $sfxCfg | Set-Content -Encoding UTF8 dist\sfx_config.txt
+
+          # Concatenate: [sfx module] + [config] + [archive] = self-extracting exe
+          $sfxBytes    = [System.IO.File]::ReadAllBytes($sfxMod)
+          $cfgBytes    = [System.Text.Encoding]::UTF8.GetBytes((Get-Content dist\sfx_config.txt -Raw))
+          $archBytes   = [System.IO.File]::ReadAllBytes("dist\payload.7z")
+          $combined    = $sfxBytes + $cfgBytes + $archBytes
+          [System.IO.File]::WriteAllBytes("dist\$outName", $combined)
+
+          Write-Host "Built installer: dist\$outName"
+          # Export filename for the upload step
+          "INSTALLER_NAME=$outName" >> $env:GITHUB_ENV
+
+      # ── 8. Create GitHub Release and upload installer ──────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "GuardianDesk Agent ${{ github.ref_name }}"
+          body: |
+            ## GuardianDesk Agent ${{ github.ref_name }}
+
+            ### Installation (child's PC)
+            1. Download **`GuardianDesk-Setup-${{ github.ref_name }}.exe`** below.
+            2. Right-click → **Run as Administrator**.
+            3. Open the GuardianDesk dashboard on the parent device, go to **Devices → Pair New Device** and copy the 6-digit code.
+            4. Enter the code when the installer prompts you.
+            5. The agent installs as a Windows Service and starts automatically on every boot.
+
+            ### Requirements
+            - Windows 10 / 11 (64-bit)
+            - Administrator rights during installation
+            - Active GuardianDesk parent account
+
+            ### Uninstalling
+            Open an **Administrator PowerShell** and run:
+            ```powershell
+            & "C:\Program Files\GuardianDesk\uninstall.bat"
+            ```
+          files: guardiandesk-agent/dist/GuardianDesk-Setup-${{ github.ref_name }}.exe
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
