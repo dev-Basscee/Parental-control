@@ -106,7 +106,9 @@ jobs:
             exit 1
           }
           Write-Host "pkg produced: $($built.Name)"
-          Rename-Item $built.FullName "dist\$outName"
+          # Rename-Item's second arg must be a bare filename, not a path.
+          # Move-Item handles full source+dest paths correctly.
+          Move-Item $built.FullName "dist\$outName"
           Write-Host "Installer ready: dist\$outName"
           "INSTALLER_NAME=$outName" >> $env:GITHUB_ENV
 
