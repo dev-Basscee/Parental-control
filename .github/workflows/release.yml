@@ -52,11 +52,12 @@ jobs:
         working-directory: guardiandesk-agent
         shell: pwsh
         run: |
-          # NOTE: no indentation inside the heredoc — dotenv rejects lines with
-          # leading spaces, which would make SUPABASE_URL appear empty and cause
-          # config.js to call process.exit(1) the instant the exe is launched.
+          # Use an absolute path — Resolve-Path fails on files that don't exist yet.
+          # Join-Path + Get-Location gives us the full path without requiring the file.
+          $envPath = Join-Path (Get-Location) ".env"
           $envContent = "SUPABASE_URL=${{ secrets.SUPABASE_URL }}`nSUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}`nSUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"
-          [System.IO.File]::WriteAllText((Resolve-Path ".env").Path, $envContent)
+          [System.IO.File]::WriteAllText($envPath, $envContent)
+          Write-Host "Written .env ($((Get-Item $envPath).Length) bytes)"
 
       # ── 5. Install pkg globally ────────────────────────────────────────────
       - name: Install pkg
@@ -67,7 +68,7 @@ jobs:
       #   main/entry: setup.js  (interactive pairing + service install)
       #   scripts:    agent.js + lib/**  (bundled so the service can spawn them)
       #   assets:     .env              (bundled so dotenv can read it at runtime)
-      #   targets:    node18-win-x64
+      #   targets:    node20-win-x64
       #   outputPath: dist/
       # The output binary is:  guardiandesk-agent/dist/guardiandesk-agent.exe
       - name: Build agent exe with pkg
