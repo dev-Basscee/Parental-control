@@ -4,7 +4,7 @@ import {
   Shield, X, RefreshCw, Check, Download, Key, HelpCircle,
   Laptop, Smartphone, Tablet, AlertCircle
 } from 'lucide-react';
-import { generatePairingCode } from '../lib/supabase';
+import { supabase, generatePairingCode } from '../lib/supabase';
 
 interface PairingScreenProps {
   onClose: () => void;
@@ -66,8 +66,7 @@ export const PairingScreen: React.FC<PairingScreenProps> = ({ onClose, onDeviceP
 
     const poll = async () => {
       try {
-        const { supabase: sb } = await import('../lib/supabase');
-        const { data } = await sb
+        const { data } = await supabase
           .from('devices')
           .select('id, status, device_name')
           .eq('id', pendingDeviceId)
