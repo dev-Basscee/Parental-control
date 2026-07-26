@@ -57,53 +57,86 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
+  // ── Computed summary values from live data ─────────────────────────────────
+  const blockedCount  = appRules.filter(a => a.isBlocked).length;
+  const onlineDevices = devices.filter(d => d.status === 'online' && !d.isLocked);
+  const primaryDevice = onlineDevices[0] ?? devices[0] ?? null;
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <div>
         <h2 className="font-bold text-2xl md:text-3xl text-[#0d1c2d] mb-4">Dashboard Overview</h2>
-        
+
         {/* Summary Cards Bento Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Apps Blocked Today */}
+          {/* Apps Blocked */}
           <div className="ambient-shadow bg-white p-6 rounded-2xl border border-slate-200/80">
             <div className="flex justify-between items-start mb-4">
-              <span className="text-xs font-bold text-[#444651] uppercase tracking-wider">Apps Blocked Today</span>
+              <span className="text-xs font-bold text-[#444651] uppercase tracking-wider">Apps Blocked</span>
               <ShieldAlert className="w-5 h-5 text-[#ba1a1a]" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="font-bold text-3xl md:text-4xl text-[#0d1c2d]">12</span>
-              <span className="text-[#444651] text-sm font-medium">+2 vs yesterday</span>
+              <span className="font-bold text-3xl md:text-4xl text-[#0d1c2d]">{blockedCount}</span>
+              <span className="text-[#444651] text-sm font-medium">
+                {blockedCount === 0 ? 'No apps blocked' : `of ${appRules.length} total`}
+              </span>
             </div>
           </div>
 
-          {/* Screen Time */}
+          {/* Screen Time — placeholder until agent reports it */}
           <div className="ambient-shadow bg-white p-6 rounded-2xl border border-slate-200/80">
             <div className="flex justify-between items-start mb-4">
               <span className="text-xs font-bold text-[#444651] uppercase tracking-wider">Screen Time</span>
               <Timer className="w-5 h-5 text-[#00236f]" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="font-bold text-3xl md:text-4xl text-[#0d1c2d]">4h 15m</span>
-              <span className="text-[#444651] text-sm font-medium">Remaining: 45m</span>
+              <span className="font-bold text-3xl md:text-4xl text-[#0d1c2d]">
+                {primaryDevice
+                  ? `${Math.floor(primaryDevice.screenTimeTodayMinutes / 60)}h ${primaryDevice.screenTimeTodayMinutes % 60}m`
+                  : '—'}
+              </span>
+              {primaryDevice && (
+                <span className="text-[#444651] text-sm font-medium">{primaryDevice.name}</span>
+              )}
             </div>
-            <div className="w-full bg-[#eef4ff] h-2 rounded-full mt-4 overflow-hidden">
-              <div className="bg-[#00236f] h-full w-[85%] rounded-full transition-all duration-500" />
-            </div>
+            {primaryDevice && (
+              <div className="w-full bg-[#eef4ff] h-2 rounded-full mt-4 overflow-hidden">
+                <div
+                  className="bg-[#00236f] h-full rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.round((primaryDevice.screenTimeTodayMinutes / (primaryDevice.maxDailyMinutes || 240)) * 100))}%` }}
+                />
+              </div>
+            )}
           </div>
 
           {/* Device Status */}
           <div className="ambient-shadow bg-white p-6 rounded-2xl border border-slate-200/80">
             <div className="flex justify-between items-start mb-4">
               <span className="text-xs font-bold text-[#444651] uppercase tracking-wider">Device Status</span>
-              <Wifi className="w-5 h-5 text-emerald-500" />
+              <Wifi className={`w-5 h-5 ${onlineDevices.length > 0 ? 'text-emerald-500' : 'text-slate-400'}`} />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="font-bold text-3xl md:text-4xl text-[#0d1c2d]">Online</span>
-              <span className="text-[#444651] text-sm font-medium">Ping: 24ms</span>
+              <span className="font-bold text-3xl md:text-4xl text-[#0d1c2d]">
+                {onlineDevices.length > 0 ? 'Online' : devices.length === 0 ? 'No devices' : 'Offline'}
+              </span>
+              <span className="text-[#444651] text-sm font-medium">
+                {devices.length > 0 ? `${onlineDevices.length}/${devices.length} active` : 'Pair a device'}
+              </span>
             </div>
             <div className="mt-4 flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 rhythmic-pulse" />
-              <span className="text-sm text-emerald-600 font-bold">Syncing now • 4 Nodes Active</span>
+              {onlineDevices.length > 0 ? (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 rhythmic-pulse" />
+                  <span className="text-sm text-emerald-600 font-bold">
+                    {onlineDevices.length} device{onlineDevices.length > 1 ? 's' : ''} online
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
+                  <span className="text-sm text-slate-500 font-semibold">No devices online</span>
+                </>
+              )}
             </div>
           </div>
         </div>
