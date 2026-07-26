@@ -2,9 +2,18 @@ name: Build & Release GuardianDesk Agent
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Triggers:
-#   • Push a tag like  v1.2.3  → builds a Windows installer and creates a
-#     GitHub Release with the installer .exe attached.
+#   • Push a tag like  v1.2.3  → builds two Windows exes and creates a
+#     GitHub Release with both attached.
 #   • Manual workflow_dispatch (useful for testing the pipeline without a tag).
+#
+# Two executables are produced every release:
+#   GuardianDesk-Setup-vX.Y.Z.exe  — entry: setup.js  (interactive wizard)
+#   guardiandesk-agent.exe          — entry: agent.js  (headless Windows Service)
+#
+# The setup exe is what the parent distributes to the child's PC.
+# It pairs the device, then installs guardiandesk-agent.exe as a Windows Service.
+# Both exes must live in the SAME directory so setup.exe can locate agent.exe
+# via process.execPath at runtime (see resolveAgentPath() in setup.js).
 #
 # Required GitHub Actions Secrets (repo Settings → Secrets and variables → Actions):
 #   SUPABASE_URL          — https://<project-ref>.supabase.co
@@ -44,16 +53,14 @@ jobs:
         run: npm ci
 
       # ── 4. Embed Supabase credentials into .env ────────────────────────────
-      # The .env is bundled into the pkg snapshot via the "assets" field in
-      # package.json so dotenv can read it at runtime inside the .exe.
+      # The .env is bundled into both pkg snapshots via the "assets" field in
+      # package.json so dotenv can read it at runtime inside either .exe.
       # Values come from GitHub Actions Secrets — set them at:
       #   Repository → Settings → Secrets and variables → Actions
       - name: Write embedded .env for pkg
         working-directory: guardiandesk-agent
         shell: pwsh
         run: |
-          # Use an absolute path — Resolve-Path fails on files that don't exist yet.
-          # Join-Path + Get-Location gives us the full path without requiring the file.
           $envPath = Join-Path (Get-Location) ".env"
           $envContent = "SUPABASE_URL=${{ secrets.SUPABASE_URL }}`nSUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}`nSUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"
           [System.IO.File]::WriteAllText($envPath, $envContent)
@@ -65,25 +72,43 @@ jobs:
       - name: Install @yao-pkg/pkg
         run: npm install -g @yao-pkg/pkg
 
-      # ── 6. Build the standalone .exe ───────────────────────────────────────
-      - name: Build agent exe with pkg
+      # ── 6. Build the agent exe (headless Windows Service) ──────────────────
+      # This exe is what the Windows Service Control Manager actually spawns.
+      # It MUST be built first so setup.exe can reference it by name.
+      - name: Build guardiandesk-agent.exe
         working-directory: guardiandesk-agent
-        run: pkg . --targets node22-win-x64 --compress GZip
+        run: pkg agent.js --targets node22-win-x64 --compress GZip --output dist/guardiandesk-agent.exe
 
-      # ── 7. Rename pkg output to the versioned installer name ───────────────
-      - name: Rename to versioned installer name
+      # ── 7. Build the setup exe (interactive wizard) ────────────────────────
+      # Entry point is setup.js. Inside the snapshot resolveAgentPath() returns
+      # path.join(path.dirname(process.execPath), 'guardiandesk-agent.exe')
+      # so both exes must be placed in the same directory on the child's PC.
+      - name: Build GuardianDesk-Setup exe
         working-directory: guardiandesk-agent
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
           if (-not $version) { $version = "dev" }
-          $outName = "GuardianDesk-Setup-${version}.exe"
-          $built = Get-ChildItem dist\*.exe | Select-Object -First 1
-          Move-Item $built.FullName "dist\$outName"
-          Write-Host "Installer ready: dist\$outName"
-          "INSTALLER_NAME=$outName" >> $env:GITHUB_ENV
+          $setupName = "GuardianDesk-Setup-${version}.exe"
+          pkg setup.js --targets node22-win-x64 --compress GZip --output "dist/$setupName"
+          Write-Host "Setup exe ready: dist/$setupName"
+          "SETUP_NAME=$setupName" >> $env:GITHUB_ENV
 
-      # ── 8. Create GitHub Release and upload installer ──────────────────────
+      # ── 8. Verify both exes exist ──────────────────────────────────────────
+      - name: Verify dist output
+        working-directory: guardiandesk-agent
+        shell: pwsh
+        run: |
+          $setup = "dist\$env:SETUP_NAME"
+          $agent = "dist\guardiandesk-agent.exe"
+          if (-not (Test-Path $setup)) { Write-Error "MISSING: $setup"; exit 1 }
+          if (-not (Test-Path $agent)) { Write-Error "MISSING: $agent"; exit 1 }
+          $sb = (Get-Item $setup).Length
+          $ab = (Get-Item $agent).Length
+          Write-Host "OK: $setup ($sb bytes)"
+          Write-Host "OK: $agent ($ab bytes)"
+
+      # ── 9. Create GitHub Release and upload both exes ──────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -93,11 +118,17 @@ jobs:
             ## GuardianDesk Agent ${{ github.ref_name }}
 
             ### Installation (child's PC)
-            1. Download **`GuardianDesk-Setup-${{ github.ref_name }}.exe`** below.
-            2. Right-click → **Run as Administrator**.
+            1. Download **both** files below into the **same folder** (e.g. `C:\GuardianDesk\`):
+               - `GuardianDesk-Setup-${{ github.ref_name }}.exe`
+               - `guardiandesk-agent.exe`
+            2. Right-click `GuardianDesk-Setup-${{ github.ref_name }}.exe` → **Run as Administrator**.
             3. Open the GuardianDesk dashboard on the parent device, go to **Devices → Pair New Device** and copy the 6-digit code.
-            4. Enter the code when the installer prompts you.
+            4. Enter the code when the setup wizard prompts you.
             5. The agent installs as a Windows Service and starts automatically on every boot.
+
+            > **Why two files?** `guardiandesk-agent.exe` is the headless background service.
+            > The setup wizard locates it next to itself on disk and registers it with Windows.
+            > Both files must be in the same directory.
 
             ### Requirements
             - Windows 10 / 11 (64-bit)
@@ -109,6 +140,8 @@ jobs:
             ```powershell
             & "C:\Program Files\GuardianDesk\uninstall.bat"
             ```
-          files: guardiandesk-agent/dist/GuardianDesk-Setup-${{ github.ref_name }}.exe
+          files: |
+            guardiandesk-agent/dist/GuardianDesk-Setup-${{ github.ref_name }}.exe
+            guardiandesk-agent/dist/guardiandesk-agent.exe
           draft: false
           prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}

@@ -18,11 +18,12 @@
   },
 
   "bin": {
-    "guardiandesk-setup": "./setup.js"
+    "guardiandesk-setup": "./setup.js",
+    "guardiandesk-agent": "./agent.js"
   },
 
   "pkg": {
-    "scripts":    ["lib/**/*.js", "config.js", "agent.js"],
+    "scripts":    ["lib/**/*.js", "config.js"],
     "assets":     [".env"],
     "targets":    ["node22-win-x64"],
     "outputPath": "dist"

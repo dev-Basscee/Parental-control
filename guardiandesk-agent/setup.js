@@ -55,6 +55,28 @@ const path     = require('path');
 const { exec } = require('child_process');
 const util     = require('util');
 
+// ---------------------------------------------------------------------------
+// resolveAgentPath — locate agent.js / guardiandesk-agent.exe correctly
+// regardless of whether we are running inside a pkg snapshot or from source.
+//
+// Inside a pkg snapshot __dirname is a VIRTUAL path like:
+//   /snapshot/guardiandesk-agent
+// Windows Services cannot spawn a process from a virtual snapshot path, so
+// we must point at the real guardiandesk-agent.exe that sits next to the
+// setup exe on disk.
+//
+// Outside pkg (dev / node setup.js) we fall back to agent.js in __dirname.
+// ---------------------------------------------------------------------------
+
+function resolveAgentPath() {
+  if (typeof process.pkg !== 'undefined') {
+    // Running inside a pkg snapshot — the real exe lives beside this exe.
+    return path.join(path.dirname(process.execPath), 'guardiandesk-agent.exe');
+  }
+  // Running from source with plain `node setup.js`
+  return path.join(__dirname, 'agent.js');
+}
+
 const { Service }        = require('node-windows');
 const tokenStore         = require('./lib/tokenStore');
 const { pairDevice }     = require('./lib/pairing');
@@ -122,7 +144,7 @@ function installAndStartService() {
       name:        'GuardianDeskAgent',
       description: 'GuardianDesk parental control background agent. ' +
                    'Enforces rules set by the parent dashboard on this device.',
-      script: path.join(__dirname, 'agent.js'),
+      script: resolveAgentPath(),
       env: [
         { name: 'SUPABASE_URL',         value: process.env.SUPABASE_URL         || '' },
         { name: 'SUPABASE_ANON_KEY',    value: process.env.SUPABASE_ANON_KEY    || '' },
