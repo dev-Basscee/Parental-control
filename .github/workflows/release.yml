@@ -75,10 +75,9 @@ jobs:
         run: pkg . --targets node22-win-x64 --compress GZip
 
       # ── 7. Rename pkg output to the versioned installer name ───────────────
-      # The pkg exe IS the installer — setup.js already handles everything
-      # interactively (pairing prompt + Windows Service registration).
-      # No SFX wrapper needed; wrapping adds unsigned-script execution-policy
-      # failures and hides error output from the parent running the installer.
+      # @yao-pkg/pkg with explicit --targets appends the target triple to the
+      # filename: guardiandesk-agent-win-x64 (no .exe extension from pkg itself,
+      # but Windows adds it). Find whichever .exe pkg produced and rename it.
       - name: Rename to versioned installer name
         working-directory: guardiandesk-agent
         shell: pwsh
@@ -86,7 +85,18 @@ jobs:
           $version = "${{ github.ref_name }}"
           if (-not $version) { $version = "dev" }
           $outName = "GuardianDesk-Setup-${version}.exe"
-          Rename-Item dist\guardiandesk-agent.exe "dist\$outName"
+
+          # @yao-pkg/pkg output name depends on how it was invoked:
+          #   pkg .                        → dist/guardiandesk-agent.exe
+          #   pkg . --targets node22-win-x64 → dist/guardiandesk-agent-win-x64.exe
+          # Find whichever .exe landed in dist/ and rename it.
+          $built = Get-ChildItem dist\*.exe | Select-Object -First 1
+          if (-not $built) {
+            Write-Error "No .exe found in dist/ — pkg build may have failed"
+            exit 1
+          }
+          Write-Host "pkg produced: $($built.Name)"
+          Rename-Item $built.FullName "dist\$outName"
           Write-Host "Installer ready: dist\$outName"
           "INSTALLER_NAME=$outName" >> $env:GITHUB_ENV
 
