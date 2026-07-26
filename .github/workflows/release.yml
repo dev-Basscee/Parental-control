@@ -52,11 +52,11 @@ jobs:
         working-directory: guardiandesk-agent
         shell: pwsh
         run: |
-          @"
-          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}
-          "@ | Set-Content .env
+          # NOTE: no indentation inside the heredoc — dotenv rejects lines with
+          # leading spaces, which would make SUPABASE_URL appear empty and cause
+          # config.js to call process.exit(1) the instant the exe is launched.
+          $envContent = "SUPABASE_URL=${{ secrets.SUPABASE_URL }}`nSUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}`nSUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"
+          [System.IO.File]::WriteAllText((Resolve-Path ".env").Path, $envContent)
 
       # ── 5. Install pkg globally ────────────────────────────────────────────
       - name: Install pkg
@@ -74,44 +74,20 @@ jobs:
         working-directory: guardiandesk-agent
         run: pkg . --compress GZip
 
-      # ── 7. Build self-extracting installer ─────────────────────────────────
-      # Combine guardiandesk-agent.exe + setup.ps1 into one self-extracting
-      # .exe using the 7-Zip SFX module (pre-installed on windows-latest).
-      # Parents download ONE file: GuardianDesk-Setup-<version>.exe
-      - name: Bundle self-extracting installer
+      # ── 7. Rename pkg output to the versioned installer name ───────────────
+      # The pkg exe IS the installer — setup.js already handles everything
+      # interactively (pairing prompt + Windows Service registration).
+      # No SFX wrapper needed; wrapping adds unsigned-script execution-policy
+      # failures and hides error output from the parent running the installer.
+      - name: Rename to versioned installer name
         working-directory: guardiandesk-agent
         shell: pwsh
         run: |
-          $7z       = "C:\Program Files\7-Zip\7z.exe"
-          $sfxMod   = "C:\Program Files\7-Zip\7z.sfx"
-          $version  = "${{ github.ref_name }}"
+          $version = "${{ github.ref_name }}"
           if (-not $version) { $version = "dev" }
-          $outName  = "GuardianDesk-Setup-${version}.exe"
-
-          # Copy setup.ps1 into dist/ so it gets packed together
-          Copy-Item setup.ps1 dist\setup.ps1
-
-          # Pack agent exe + setup script into a .7z archive
-          & $7z a -t7z dist\payload.7z dist\guardiandesk-agent.exe dist\setup.ps1
-
-          # SFX config: auto-run setup.ps1 on extraction
-          $sfxCfg = @"
-          ;!@Install@!UTF-8!
-          Title="GuardianDesk Agent Setup"
-          RunProgram="powershell.exe -ExecutionPolicy Bypass -File setup.ps1"
-          ;!@InstallEnd@!
-          "@
-          $sfxCfg | Set-Content -Encoding UTF8 dist\sfx_config.txt
-
-          # Concatenate: [sfx module] + [config] + [archive] = self-extracting exe
-          $sfxBytes    = [System.IO.File]::ReadAllBytes($sfxMod)
-          $cfgBytes    = [System.Text.Encoding]::UTF8.GetBytes((Get-Content dist\sfx_config.txt -Raw))
-          $archBytes   = [System.IO.File]::ReadAllBytes("dist\payload.7z")
-          $combined    = $sfxBytes + $cfgBytes + $archBytes
-          [System.IO.File]::WriteAllBytes("dist\$outName", $combined)
-
-          Write-Host "Built installer: dist\$outName"
-          # Export filename for the upload step
+          $outName = "GuardianDesk-Setup-${version}.exe"
+          Rename-Item dist\guardiandesk-agent.exe "dist\$outName"
+          Write-Host "Installer ready: dist\$outName"
           "INSTALLER_NAME=$outName" >> $env:GITHUB_ENV
 
       # ── 8. Create GitHub Release and upload installer ──────────────────────

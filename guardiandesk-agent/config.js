@@ -40,14 +40,14 @@ const FUNCTIONS_URL = SUPABASE_URL
 const configWarnings = [];
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  // Fatal — process.exit here is acceptable because nothing can work without
-  // these two values, and the error will appear in the Windows Event Log
-  // (node-windows catches it) even without a console.
-  process.stderr.write(
-    '[GuardianDesk] FATAL: SUPABASE_URL and SUPABASE_ANON_KEY must be set.\n' +
-    'Re-run GuardianDeskSetup.exe to reinstall with correct environment variables.\n'
+  // Throw instead of process.exit so setup.js can catch it and keep the
+  // console window open with a readable error message (exit(1) from a module
+  // bypasses the top-level catch in setup.js and closes the window instantly).
+  throw new Error(
+    'Missing Supabase configuration — the installer was built without credentials.\n' +
+    '  This usually means the GitHub Actions secrets were not set before tagging.\n' +
+    '  Contact the developer or check: https://github.com/dev-Basscee/Parental-control/releases'
   );
-  process.exit(1);
 }
 
 if (!SUPABASE_SERVICE_KEY) {

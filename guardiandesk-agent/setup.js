@@ -297,8 +297,19 @@ async function main() {
   }
 }
 
-// Top-level error boundary
+// Top-level error boundary — keep the window open so the parent can read the error.
 main().catch((err) => {
-  printErr(`Unexpected error: ${err.message}`);
-  process.exit(1);
+  process.stderr.write('\n');
+  process.stderr.write('  ╔══════════════════════════════════════════════════════╗\n');
+  process.stderr.write('  ║                  SETUP FAILED                       ║\n');
+  process.stderr.write('  ╚══════════════════════════════════════════════════════╝\n');
+  process.stderr.write(`\n  \u274C ${err.message}\n\n`);
+  process.stderr.write('  Common causes:\n');
+  process.stderr.write('    \u2022 Not running as Administrator \u2014 right-click \u2192 Run as administrator\n');
+  process.stderr.write('    \u2022 No internet connection on this PC\n');
+  process.stderr.write('    \u2022 Pairing code expired \u2014 generate a new one in the dashboard\n');
+  process.stderr.write('\n  Log file: C:\\ProgramData\\GuardianDesk\\agent.log\n\n');
+  // Keep the window open so the parent can read the error before it disappears.
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.question('  Press Enter to close this window... ', () => { rl.close(); process.exit(1); });
 });
