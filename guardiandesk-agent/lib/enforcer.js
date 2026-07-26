@@ -81,14 +81,9 @@ function ruleName(appName) {
 async function killProcess(appName) {
   const exeName = normaliseExeName(appName);
   try {
-    // double-quote the exe name to handle spaces (e.g. "Epic Games Launcher.exe")
     await execAsync(`taskkill /IM "${exeName}" /F`, { windowsHide: true });
-    console.log(`[enforcer] Killed process: ${exeName}`);
-  } catch (err) {
-    // Exit code 128 = "not running" — this is expected and completely harmless
-    if (err.code !== 128 && !err.message.includes('not found')) {
-      console.warn(`[enforcer] taskkill for ${exeName} returned: ${err.message}`);
-    }
+  } catch {
+    // Exit code 128 = "not running" — expected; no console (headless-safe)
   }
 }
 
@@ -132,12 +127,8 @@ async function blockNetworkAccess(appName, exePath) {
 
   try {
     await execAsync(cmd, { windowsHide: true });
-    console.log(`[enforcer] Firewall rule added: ${name} → ${exePath}`);
-  } catch (err) {
-    // Rule already exists = non-zero exit but not a real error
-    if (!err.message.includes('already exists')) {
-      console.warn(`[enforcer] Failed to add firewall rule for ${appName}: ${err.message}`);
-    }
+  } catch {
+    // Rule already exists = non-zero exit but harmless; no console (headless-safe)
   }
 }
 
@@ -161,11 +152,8 @@ async function unblockNetworkAccess(appName) {
 
   try {
     await execAsync(cmd, { windowsHide: true });
-    console.log(`[enforcer] Firewall rule removed: ${name}`);
-  } catch (err) {
-    if (!err.message.includes('No rules match')) {
-      console.warn(`[enforcer] Failed to remove firewall rule for ${appName}: ${err.message}`);
-    }
+  } catch {
+    // "No rules match" or already removed — harmless; no console (headless-safe)
   }
 }
 
@@ -185,12 +173,8 @@ async function removeAllGuardianDeskFirewallRules() {
   const cmd = `netsh advfirewall firewall delete rule name="${RULE_PREFIX}*"`;
   try {
     await execAsync(cmd, { windowsHide: true });
-    console.log('[enforcer] All GuardianDesk firewall rules removed.');
-  } catch (err) {
-    // "No rules match" is fine — nothing to clean up
-    if (!err.message.includes('No rules match')) {
-      console.warn(`[enforcer] Warning during firewall cleanup: ${err.message}`);
-    }
+  } catch {
+    // "No rules match" is fine — nothing to clean up; no console (headless-safe)
   }
 }
 

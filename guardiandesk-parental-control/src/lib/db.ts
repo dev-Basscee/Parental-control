@@ -26,6 +26,8 @@ interface DbApp {
   display_name: string;
   status: 'allowed' | 'blocked' | 'scheduled';
   last_updated: string;
+  // joined:
+  devices?: { device_name: string }[] | null;
 }
 
 interface DbLog {
@@ -90,21 +92,23 @@ function formatRelative(date: Date): string {
 export async function loadApps(): Promise<AppRule[]> {
   const { data, error } = await supabase
     .from('apps')
-    .select('id, device_id, app_name, display_name, status, last_updated')
+    .select('id, device_id, app_name, display_name, status, last_updated, devices(device_name)')
     .order('last_updated', { ascending: false });
 
   if (error) throw error;
-  return (data as DbApp[]).map(dbAppToFrontend);
+  return (data as unknown as DbApp[]).map(dbAppToFrontend);
 }
 
 /** Map a DB app row to the frontend AppRule type. */
 export function dbAppToFrontend(row: DbApp): AppRule {
-  const isBlocked = row.status === 'blocked';
+  const isBlocked  = row.status === 'blocked';
+  const deviceName = row.devices?.[0]?.device_name;
   return {
     id:                   row.id,
     appName:              row.display_name || row.app_name,
     executableName:       row.app_name,
-    category:             'Other',
+    // Show which device this app belongs to in the category column
+    category:             deviceName ? (deviceName as AppRule['category']) : 'Other',
     status:               isBlocked ? 'Blocked' : row.status === 'scheduled' ? 'Scheduled' : 'Allowed',
     usageTodayMinutes:    0,
     iconName:             guessIcon(row.app_name),

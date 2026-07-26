@@ -102,8 +102,7 @@ function saveToken(deviceId, deviceToken) {
   // Write IV followed by ciphertext as a single binary file.
   const payload = Buffer.concat([iv, encrypted]);
   fs.writeFileSync(TOKEN_FILE, payload);
-
-  console.log(`[tokenStore] Credentials saved to ${TOKEN_FILE}`);
+  // No console output — this module is loaded by agent.js (headless service)
 }
 
 /**
@@ -122,8 +121,7 @@ function loadToken() {
     const payload = fs.readFileSync(TOKEN_FILE);
 
     if (payload.length <= IV_BYTES) {
-      console.warn('[tokenStore] device.dat is too short — treating as invalid.');
-      return null;
+      return null;  // too short — treat as invalid; no console (headless-safe)
     }
 
     const iv         = payload.subarray(0, IV_BYTES);
@@ -137,9 +135,8 @@ function loadToken() {
     ]).toString('utf8');
 
     return JSON.parse(plaintext); // { deviceId, deviceToken }
-  } catch (err) {
-    // Wrong machine key, corrupted file, or bad JSON — all are non-fatal here.
-    console.warn(`[tokenStore] Failed to decrypt device.dat: ${err.message}`);
+  } catch {
+    // Wrong machine key, corrupted file, or bad JSON — non-fatal, headless-safe
     return null;
   }
 }
@@ -149,10 +146,7 @@ function loadToken() {
  * Called by uninstall.js during service removal.
  */
 function deleteToken() {
-  if (fs.existsSync(TOKEN_FILE)) {
-    fs.unlinkSync(TOKEN_FILE);
-    console.log(`[tokenStore] Deleted ${TOKEN_FILE}`);
-  }
+  try { if (fs.existsSync(TOKEN_FILE)) fs.unlinkSync(TOKEN_FILE); } catch { /* ignore */ }
 }
 
 module.exports = { saveToken, loadToken, deleteToken, TOKEN_FILE };

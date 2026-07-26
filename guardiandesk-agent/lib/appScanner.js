@@ -82,9 +82,8 @@ async function getRunningApps() {
     }
 
     return apps;
-  } catch (err) {
-    console.error(`[appScanner] getRunningApps failed: ${err.message}`);
-    return [];  // Non-fatal — return empty list so the sync still proceeds
+  } catch {
+    return [];  // Non-fatal — return empty; no console (headless-safe)
   }
 }
 
@@ -152,9 +151,7 @@ async function getInstalledApps() {
         const parsed = JSON.parse(trimmed);
         names = Array.isArray(parsed) ? parsed : [parsed];
       } catch {
-        // PowerShell sometimes returns bare text — treat the whole output as
-        // one name if JSON parsing fails.
-        names = [trimmed];
+        names = [trimmed]; // bare text — treat as single name
       }
 
       for (const name of names) {
@@ -164,10 +161,8 @@ async function getInstalledApps() {
           result.push({ display_name: displayName });
         }
       }
-    } catch (err) {
-      // A missing registry path or PowerShell error is not fatal.
-      // Log at debug level and continue with whatever we've collected.
-      console.warn(`[appScanner] Skipping registry path ${regPath}: ${err.message}`);
+    } catch {
+      // Missing registry path or PowerShell error — non-fatal, continue
     }
   }
 
