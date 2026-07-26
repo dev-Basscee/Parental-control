@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Shield, ShieldAlert, Clock, MapPin, Plus, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Shield, ShieldAlert, Clock, MapPin, Plus, ArrowRight, CheckCircle2, Mail } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface AuthScreenProps {
@@ -8,7 +8,7 @@ interface AuthScreenProps {
 }
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onOpenPairing }) => {
-  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'empty-state-demo'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'empty-state-demo' | 'confirm-email'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -22,14 +22,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onOpenPa
 
     try {
       if (authMode === 'signup') {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: { data: { full_name: fullName } },
         });
         if (error) throw error;
-        // After sign-up Supabase sends a confirmation email.
-        // For now, proceed directly (email confirmation can be disabled in Supabase dashboard for dev).
+        // When "Confirm email" is enabled in Supabase (the default on hosted
+        // projects), signUp() succeeds but returns session: null — the user
+        // must click the confirmation link before they have a live session.
+        // Calling onLoginSuccess() with no session would drop them into the
+        // dashboard where every RLS-protected query would silently fail.
+        if (!data.session) {
+          // Email confirmation required — show "check your inbox" screen.
+          setAuthMode('confirm-email');
+          return;
+        }
+        // Email confirmation is disabled (dev mode) — session is live immediately.
         onLoginSuccess(true); // treat fresh account as empty-state
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -42,6 +51,44 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onOpenPa
       setIsLoading(false);
     }
   };
+
+  // ── Email confirmation pending ────────────────────────────────────────────
+  if (authMode === 'confirm-email') {
+    return (
+      <main className="min-h-screen bg-[#f8f9ff] flex items-center justify-center p-4 md:p-8">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl border border-slate-200/60 p-10 text-center space-y-6">
+          <div className="w-16 h-16 rounded-full bg-[#eef4ff] flex items-center justify-center mx-auto">
+            <Mail className="w-8 h-8 text-[#1e3a8a]" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="font-bold text-2xl text-[#0d1c2d]">Check your inbox</h1>
+            <p className="text-sm text-[#444651] leading-relaxed">
+              We sent a confirmation link to <span className="font-semibold text-[#0d1c2d]">{email}</span>.
+              Click it to activate your account, then come back and sign in.
+            </p>
+          </div>
+          <button
+            onClick={() => { setAuthMode('login'); setAuthError(null); }}
+            className="w-full bg-[#1e3a8a] text-white py-3 rounded-xl font-bold hover:bg-[#00236f] transition-all"
+          >
+            Back to Sign In
+          </button>
+          <p className="text-xs text-[#444651]">
+            Didn't receive it? Check your spam folder, or{' '}
+            <button
+              onClick={async () => {
+                await supabase.auth.resend({ type: 'signup', email });
+              }}
+              className="text-[#1e3a8a] font-semibold hover:underline"
+            >
+              resend the email
+            </button>
+            .
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   if (authMode === 'empty-state-demo') {
     return (
