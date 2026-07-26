@@ -60,34 +60,17 @@ jobs:
           Write-Host "Written .env ($((Get-Item $envPath).Length) bytes)"
 
       # ── 5. Install @yao-pkg/pkg ────────────────────────────────────────────
+      # pkg@5 (Vercel) is abandoned — CDN no longer hosts node18+ binaries.
+      # @yao-pkg/pkg is the maintained fork with full node22 support.
       - name: Install @yao-pkg/pkg
         run: npm install -g @yao-pkg/pkg
 
       # ── 6. Build the standalone .exe ───────────────────────────────────────
       - name: Build agent exe with pkg
         working-directory: guardiandesk-agent
-        shell: pwsh
-        run: |
-          # Show what files are present before build
-          Write-Host "=== dist/ before build ==="
-          if (Test-Path dist) { Get-ChildItem dist } else { Write-Host "(no dist/ yet)" }
-
-          # Show node + pkg versions
-          Write-Host "=== versions ==="
-          node --version
-          pkg --version
-
-          # Run pkg — use full node22 target string
-          Write-Host "=== running pkg ==="
-          pkg . --targets node22-win-x64 --compress GZip
-
-          Write-Host "=== dist/ after build ==="
-          Get-ChildItem dist
+        run: pkg . --targets node22-win-x64 --compress GZip
 
       # ── 7. Rename pkg output to the versioned installer name ───────────────
-      # @yao-pkg/pkg with explicit --targets appends the target triple to the
-      # filename: guardiandesk-agent-win-x64 (no .exe extension from pkg itself,
-      # but Windows adds it). Find whichever .exe pkg produced and rename it.
       - name: Rename to versioned installer name
         working-directory: guardiandesk-agent
         shell: pwsh
@@ -95,19 +78,7 @@ jobs:
           $version = "${{ github.ref_name }}"
           if (-not $version) { $version = "dev" }
           $outName = "GuardianDesk-Setup-${version}.exe"
-
-          # @yao-pkg/pkg output name depends on how it was invoked:
-          #   pkg .                        → dist/guardiandesk-agent.exe
-          #   pkg . --targets node22-win-x64 → dist/guardiandesk-agent-win-x64.exe
-          # Find whichever .exe landed in dist/ and rename it.
           $built = Get-ChildItem dist\*.exe | Select-Object -First 1
-          if (-not $built) {
-            Write-Error "No .exe found in dist/ — pkg build may have failed"
-            exit 1
-          }
-          Write-Host "pkg produced: $($built.Name)"
-          # Rename-Item's second arg must be a bare filename, not a path.
-          # Move-Item handles full source+dest paths correctly.
           Move-Item $built.FullName "dist\$outName"
           Write-Host "Installer ready: dist\$outName"
           "INSTALLER_NAME=$outName" >> $env:GITHUB_ENV
