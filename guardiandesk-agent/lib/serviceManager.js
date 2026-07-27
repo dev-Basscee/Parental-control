@@ -121,13 +121,15 @@ async function installService({ agentExePath, env }) {
   await runNssm(['set', SERVICE_NAME, 'AppExit', 'Default', 'Restart']);
   await runNssm(['set', SERVICE_NAME, 'AppRestartDelay', '5000']);
 
-  // Environment variables — passed as separate argv entries so execFile
-  // (no shell) handles any special characters in the Supabase keys safely.
+  // Environment variables — nssm AppEnvironmentExtra expects all KEY=VALUE
+  // pairs as a SINGLE argument joined by newlines. Passing them as separate
+  // argv entries makes nssm reject with "Environment should comprise strings
+  // of the form KEY=VALUE" because it sees them as extra positional params.
   const envPairs = Object.entries(env || {})
     .filter(([, v]) => v !== undefined && v !== null && v !== '')
     .map(([k, v]) => `${k}=${v}`);
   if (envPairs.length > 0) {
-    await runNssm(['set', SERVICE_NAME, 'AppEnvironmentExtra', ...envPairs]);
+    await runNssm(['set', SERVICE_NAME, 'AppEnvironmentExtra', envPairs.join('\n')]);
   }
 }
 
