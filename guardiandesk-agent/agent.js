@@ -166,6 +166,8 @@ function postJSON(url, body, headers = {}) {
         headers: {
           'Content-Type':   'application/json',
           'Content-Length': Buffer.byteLength(payload),
+          // Supabase gateway requires the anon key on every Edge Function call.
+          'Authorization':  `Bearer ${SUPABASE_ANON_KEY}`,
           ...headers,
         },
       },
@@ -198,6 +200,7 @@ function agentHeaders() {
   return {
     'x-device-id':    credentials.deviceId,
     'x-device-token': credentials.deviceToken,
+    // Authorization is already added by postJSON; these are extra device headers.
   };
 }
 

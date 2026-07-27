@@ -28,7 +28,7 @@
 const https = require('https');
 const http  = require('http');
 
-const { FUNCTIONS_URL } = require('../config');
+const { FUNCTIONS_URL, SUPABASE_ANON_KEY } = require('../config');
 
 // ---------------------------------------------------------------------------
 // Internal HTTP helper
@@ -59,6 +59,9 @@ function postJSON(url, body) {
         headers: {
           'Content-Type':   'application/json',
           'Content-Length': Buffer.byteLength(payload),
+          // Supabase gateway requires the anon key on every Edge Function call,
+          // even public ones like pair-device (no user session needed).
+          'Authorization':  `Bearer ${SUPABASE_ANON_KEY}`,
         },
       },
       (res) => {
