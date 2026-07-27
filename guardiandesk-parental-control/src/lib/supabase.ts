@@ -45,8 +45,7 @@ export async function generatePairingCode(deviceName: string): Promise<{
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('Not authenticated — please sign in first.');
 
-  const FUNCTIONS_URL = SUPABASE_URL
-    .replace('.supabase.co', '.functions.supabase.co') + '/v1';
+  const FUNCTIONS_URL = SUPABASE_URL + '/functions/v1';
 
   const res = await fetch(`${FUNCTIONS_URL}/generate-pairing-code`, {
     method:  'POST',

@@ -32,9 +32,9 @@ const SUPABASE_ANON_KEY   = process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || null;
 
 // Edge Function base URL — derived from SUPABASE_URL automatically.
-// All Edge Functions are reachable at <project>.functions.supabase.co/v1/<name>
+// All Edge Functions are reachable at <project>.supabase.co/functions/v1/<name>
 const FUNCTIONS_URL = SUPABASE_URL
-  ? SUPABASE_URL.replace('.supabase.co', '.functions.supabase.co') + '/v1'
+  ? SUPABASE_URL + '/functions/v1'
   : null;
 
 // ---------------------------------------------------------------------------
