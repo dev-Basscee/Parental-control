@@ -16,7 +16,12 @@
  * writes to its log file after the logger is initialised.
  */
 
-require('dotenv').config();
+// When running inside a pkg snapshot __dirname is a virtual path like
+// /snapshot/guardiandesk-agent — dotenv's default (process.cwd()) would
+// look on the real filesystem where the .env doesn't exist.
+// Passing __dirname explicitly makes dotenv read the .env that pkg bundled
+// into the snapshot as an asset (see package.json → pkg.assets).
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const SUPABASE_URL        = process.env.SUPABASE_URL      || '';
 const SUPABASE_ANON_KEY   = process.env.SUPABASE_ANON_KEY || '';
