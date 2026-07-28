@@ -32,6 +32,7 @@ const ALLOWED_ACTIONS = new Set([
   "blocked", "unblocked",
   "app_launched", "app_closed",
   "device_connected", "device_disconnected",
+  "device_locked", "device_unlocked",
   "limit_reached",
   "agent_restarted", "agent_restarted_after_gap",
 ]);
