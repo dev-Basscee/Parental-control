@@ -89,14 +89,13 @@ async function isServiceInstalled() {
 }
 
 /**
- * Install (or re-point) the GuardianDeskAgent service to run agentExePath,
- * configure auto-restart on crash, and set required environment variables.
+ * Install (or re-point) the GuardianDeskAgent service to run agentExePath
+ * and configure auto-restart on crash.
  *
  * @param {Object} opts
  * @param {string} opts.agentExePath   Absolute path to guardiandesk-agent.exe
- * @param {Object<string,string>} opts.env  Environment variables to inject
  */
-async function installService({ agentExePath, env }) {
+async function installService({ agentExePath }) {
   const alreadyInstalled = await isServiceInstalled();
 
   if (!alreadyInstalled) {
@@ -121,16 +120,8 @@ async function installService({ agentExePath, env }) {
   await runNssm(['set', SERVICE_NAME, 'AppExit', 'Default', 'Restart']);
   await runNssm(['set', SERVICE_NAME, 'AppRestartDelay', '5000']);
 
-  // Environment variables — nssm AppEnvironmentExtra expects all KEY=VALUE
-  // pairs as a SINGLE argument joined by newlines. Passing them as separate
-  // argv entries makes nssm reject with "Environment should comprise strings
-  // of the form KEY=VALUE" because it sees them as extra positional params.
-  const envPairs = Object.entries(env || {})
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([k, v]) => `${k}=${v}`);
-  if (envPairs.length > 0) {
-    await runNssm(['set', SERVICE_NAME, 'AppEnvironmentExtra', envPairs.join('\n')]);
-  }
+  // Supabase credentials are baked into the agent exe snapshot via the .env
+  // asset bundled by pkg — nssm does not need to inject env vars at all.
 }
 
 async function startService() {
