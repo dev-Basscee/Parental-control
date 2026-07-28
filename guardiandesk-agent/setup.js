@@ -136,12 +136,12 @@ async function installAndStartService() {
   // them, and attempting to set AppEnvironmentExtra causes nssm to fail.
   await serviceManager.installService({ agentExePath });
   printOk(alreadyInstalled
-    ? 'Service is already installed \u2014 re-verified configuration.'
-    : 'Windows Service registered (via nssm).');
+    ? 'Task already registered \u2014 re-verified configuration.'
+    : 'Scheduled task registered (runs on every boot as SYSTEM).');
 
-  println('  Ensuring it is started...');
+  println('  Starting agent now...');
   await serviceManager.startService();
-  printOk('GuardianDeskAgent service started.');
+  printOk('GuardianDeskAgent started.');
 
   println('');
   println('\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557');
