@@ -120,6 +120,14 @@ let credentials;
 const blockedApps = new Set();
 
 /**
+ * Tracks apps with status='scheduled' → their rule object.
+ * enforcementTick re-evaluates these every 10 s so block windows activate/
+ * deactivate automatically at clock boundaries without a DB event.
+ * @type {Map<string, object>}
+ */
+const scheduledRulesCache = new Map();
+
+/**
  * Maps app_name (lowercase) → absolute exe path, populated during syncApps.
  * Used to add accurate Windows Firewall rules scoped to the exact .exe path.
  * @type {Map<string, string>}
@@ -331,20 +339,35 @@ async function seedBlockedApps() {
 // 4. Apply a single app's status (called by Realtime and syncApps)
 // ---------------------------------------------------------------------------
 
+const { isWithinScheduleWindow } = require('./lib/scheduler');
+
 /**
  * Adds or removes an app from the blockedApps Set and applies the corresponding
  * firewall/kill enforcement.
  *
+ * For 'scheduled' status the rule object is stored in scheduledRulesCache so
+ * enforcementTick() can re-evaluate it at every 10-second clock boundary.
+ *
  * @param {string} appName
  * @param {'blocked'|'allowed'|'scheduled'} status
+ * @param {object|null} [rule]  Required when status='scheduled'
  */
-async function applyAppStatus(appName, status) {
-  if (status === 'blocked') {
+async function applyAppStatus(appName, status, rule = null) {
+  // Keep the scheduled-rule cache in sync regardless of whether we block or not
+  if (status === 'scheduled' && rule) {
+    scheduledRulesCache.set(appName, rule);
+  } else if (status !== 'scheduled') {
+    scheduledRulesCache.delete(appName);
+  }
+
+  const shouldBlock =
+    status === 'blocked' ||
+    (status === 'scheduled' && isWithinScheduleWindow(rule));
+
+  if (shouldBlock) {
     if (!blockedApps.has(appName)) {
       blockedApps.add(appName);
-      logger.info(`Blocking: ${appName}`);
-
-      // Apply firewall rule if we know the exe path
+      logger.info(`Blocking: ${appName}${status === 'scheduled' ? ' (scheduled window active)' : ''}`);
       const exePath = exePathCache.get(appName.toLowerCase()) || '';
       if (exePath) {
         await blockNetworkAccess(appName, exePath);
@@ -401,7 +424,17 @@ function subscribeToRealtime() {
 
           const row = payload.new;
           if (row && row.app_name) {
-            await applyAppStatus(row.app_name, row.status);
+            if (row.status === 'scheduled') {
+              // Fetch the schedule rule so applyAppStatus can evaluate the window
+              const { data: ruleRow } = await supabase
+                .from('rules')
+                .select('schedule_days, schedule_start, schedule_end')
+                .eq('app_id', row.id)
+                .maybeSingle();
+              await applyAppStatus(row.app_name, row.status, ruleRow);
+            } else {
+              await applyAppStatus(row.app_name, row.status, null);
+            }
           }
         } catch (err) {
           logger.error(`Error handling Realtime event: ${err.message}`);
@@ -420,15 +453,90 @@ function subscribeToRealtime() {
 }
 
 // ---------------------------------------------------------------------------
+// 4c. Subscribe to device lock changes
+// ---------------------------------------------------------------------------
+
+/**
+ * Kills ALL non-system user processes when is_locked is set to true, and
+ * logs the event so the parent can see it in the dashboard.
+ */
+async function applyDeviceLock(isLocked) {
+  if (isLocked) {
+    logger.info('Device LOCKED by parent — killing all user processes.');
+    try {
+      // /IM * kills all processes; /F forces; errors for system processes are
+      // suppressed by 2>nul so the agent doesn't crash on Access Denied entries.
+      await execAsync('taskkill /F /IM * 2>nul', { windowsHide: true }).catch(() => {});
+    } catch (_) { /* best-effort */ }
+    try {
+      await postJSON(
+        `${FUNCTIONS_URL}/report-activity`,
+        { app_name: 'system', action: 'device_locked', triggered_by: 'parent' },
+        agentHeaders()
+      );
+    } catch (err) {
+      logger.warn(`Could not report device_locked: ${err.message}`);
+    }
+  } else {
+    logger.info('Device UNLOCKED by parent.');
+    try {
+      await postJSON(
+        `${FUNCTIONS_URL}/report-activity`,
+        { app_name: 'system', action: 'device_unlocked', triggered_by: 'parent' },
+        agentHeaders()
+      );
+    } catch (err) {
+      logger.warn(`Could not report device_unlocked: ${err.message}`);
+    }
+  }
+}
+
+function subscribeToDeviceLock() {
+  supabase
+    .channel(`guardiandesk-device-lock-${credentials.deviceId}`)
+    .on(
+      'postgres_changes',
+      {
+        event:  'UPDATE',
+        schema: 'public',
+        table:  'devices',
+        filter: `id=eq.${credentials.deviceId}`,
+      },
+      async (payload) => {
+        try {
+          const row = payload.new;
+          if (row && typeof row.is_locked === 'boolean') {
+            await applyDeviceLock(row.is_locked);
+          }
+        } catch (err) {
+          logger.error(`Device lock handler error: ${err.message}`);
+        }
+      }
+    )
+    .subscribe((status, err) => {
+      if (err) {
+        logger.error(`Device-lock subscription error: ${err.message}`);
+      } else {
+        logger.info(`Device-lock subscription status: ${status}`);
+      }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // 5. Enforcement tick (every 10 s)
 // ---------------------------------------------------------------------------
 
 async function enforcementTick() {
   const blocked = Array.from(blockedApps);
-  if (blocked.length === 0) return;
+  if (blocked.length > 0) {
+    logger.info(`Enforcement tick: ${blocked.length} blocked app(s).`);
+    await enforceBlockedApps(blocked);
+  }
 
-  logger.info(`Enforcement tick: ${blocked.length} blocked app(s).`);
-  await enforceBlockedApps(blocked);
+  // Re-evaluate scheduled apps at every clock boundary — no DB call needed
+  for (const [appName, rule] of scheduledRulesCache.entries()) {
+    await applyAppStatus(appName, 'scheduled', rule);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +648,7 @@ async function syncApps() {
     // the agent was offline, this call catches it up.
     if (result && Array.isArray(result.rules)) {
       for (const row of result.rules) {
-        await applyAppStatus(row.app_name, row.app_status);
+        await applyAppStatus(row.app_name, row.app_status, row.rule ?? null);
       }
     }
 
@@ -579,6 +687,7 @@ async function main() {
 
   // Step 4: Subscribe to Realtime for instant push
   subscribeToRealtime();
+  subscribeToDeviceLock();
 
   // Step 5: Enforcement tick — every 10 seconds
   const enforceTick = setInterval(async () => {
