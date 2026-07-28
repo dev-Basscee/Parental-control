@@ -131,14 +131,10 @@ async function installAndStartService() {
 
   const alreadyInstalled = await serviceManager.isServiceInstalled();
 
-  await serviceManager.installService({
-    agentExePath,
-    env: {
-      SUPABASE_URL:         process.env.SUPABASE_URL         || '',
-      SUPABASE_ANON_KEY:    process.env.SUPABASE_ANON_KEY    || '',
-      SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || '',
-    },
-  });
+  // No env vars passed — Supabase keys are already baked into the agent exe
+  // snapshot via the .env asset bundled by pkg. nssm does not need to inject
+  // them, and attempting to set AppEnvironmentExtra causes nssm to fail.
+  await serviceManager.installService({ agentExePath });
   printOk(alreadyInstalled
     ? 'Service is already installed \u2014 re-verified configuration.'
     : 'Windows Service registered (via nssm).');
