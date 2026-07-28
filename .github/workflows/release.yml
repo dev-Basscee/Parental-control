@@ -2,18 +2,18 @@ name: Build & Release GuardianDesk Agent
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Triggers:
-#   • Push a tag like  v1.2.3  → builds two Windows exes and creates a
-#     GitHub Release with both attached.
+#   • Push a tag like  v1.2.3  → builds three Windows exes and creates a
+#     GitHub Release with all three attached.
 #   • Manual workflow_dispatch (useful for testing the pipeline without a tag).
 #
-# Two executables are produced every release:
-#   GuardianDesk-Setup-vX.Y.Z.exe  — entry: setup.js  (interactive wizard)
-#   guardiandesk-agent.exe          — entry: agent.js  (headless Windows Service)
+# Three executables are produced every release:
+#   GuardianDesk-Setup-vX.Y.Z.exe  — entry: setup.js    (interactive wizard)
+#   guardiandesk-agent.exe          — entry: agent.js    (headless Windows Service)
+#   guardiandesk-uninstall.exe      — entry: uninstall.js (cleanup tool)
 #
-# The setup exe is what the parent distributes to the child's PC.
-# It pairs the device, then installs guardiandesk-agent.exe as a Windows Service.
-# Both exes must live in the SAME directory so setup.exe can locate agent.exe
-# via process.execPath at runtime (see resolveAgentPath() in setup.js).
+# Parents download all three into the same folder on the child's PC.
+# The setup exe pairs the device then registers agent.exe as a Windows Service
+# via nssm. All three must live in the SAME directory.
 #
 # Required GitHub Actions Secrets (repo Settings → Secrets and variables → Actions):
 #   SUPABASE_URL          — https://<project-ref>.supabase.co
@@ -84,11 +84,16 @@ jobs:
           Write-Host "  SUPABASE_ANON_KEY length:    $("${{ secrets.SUPABASE_ANON_KEY }}".Length)"
           Write-Host "  SUPABASE_SERVICE_KEY length: $("${{ secrets.SUPABASE_SERVICE_KEY }}".Length)"
 
-      # ── 5. Install @yao-pkg/pkg ────────────────────────────────────────────
+      # ── 5. Install @yao-pkg/pkg and pre-fetch the node22 binary ───────────
       # pkg@5 (Vercel) is abandoned — CDN no longer hosts node18+ binaries.
       # @yao-pkg/pkg is the maintained fork with full node22 support.
+      # pkg-fetch downloads the pre-built node22-win-x64 binary so the build
+      # steps don't have to compile Node from source (which takes 20+ minutes).
       - name: Install @yao-pkg/pkg
         run: npm install -g @yao-pkg/pkg
+
+      - name: Pre-fetch pkg node22 binary
+        run: npx --yes @yao-pkg/pkg-fetch --node-range node22 --platform win --arch x64
 
       # ── 6. Build the agent exe (headless Windows Service) ──────────────────
       # This exe is what the Windows Service Control Manager actually spawns.
