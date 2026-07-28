@@ -323,9 +323,9 @@ async function seedBlockedApps() {
 
     if (result && Array.isArray(result.rules)) {
       for (const row of result.rules) {
-        if (row.app_status === 'blocked') {
-          blockedApps.add(row.app_name);
-        }
+        // Use applyAppStatus so scheduled rules are evaluated against the clock
+        // and the scheduledRulesCache is populated before enforcementTick runs.
+        await applyAppStatus(row.app_name, row.app_status, row.rule ?? null);
       }
     }
 
