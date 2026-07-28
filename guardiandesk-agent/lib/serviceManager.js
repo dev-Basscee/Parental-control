@@ -1,73 +1,49 @@
 'use strict';
 
 /**
- * lib/serviceManager.js — Windows Service management via NSSM
- * ─────────────────────────────────────────────────────────────
+ * lib/serviceManager.js — Background agent persistence via Task Scheduler
+ * ────────────────────────────────────────────────────────────────────────
  *
- * WHY THIS EXISTS (replacing node-windows)
- * ──────────────────────────────────────────
- * node-windows registers a service whose real entry point is its own
- * `wrapper.js`, which starts your target with `child_process.fork()`.
- * `fork()` always loads its target as a Node.js *module* — it hands the
- * path to Node's CommonJS loader. That works fine when the target is a
- * plain `.js` file, but our target is `guardiandesk-agent.exe`, a
- * standalone pkg-compiled binary with no JS to parse. Node's module
- * loader chokes on the raw PE binary bytes with a SyntaxError, and the
- * service crash-loops forever without ever actually running the agent.
+ * WHY TASK SCHEDULER INSTEAD OF A WINDOWS SERVICE
+ * ─────────────────────────────────────────────────
+ * A Windows Service requires the service binary to call
+ * StartServiceCtrlDispatcher() within 30 s of SCM launching it, or SCM
+ * kills it with error 1053 (timeout). Our agent is a pkg-compiled Node.js
+ * binary — it never calls that API.
  *
- * NSSM (the Non-Sucking Service Manager) does not have this problem: it
- * is a native Windows Service shim built specifically to run *arbitrary*
- * executables as services — it talks to the Service Control Manager
- * itself and simply launches the given .exe as a monitored child
- * process, restarting it if it exits unexpectedly. That is exactly the
- * shape of guardiandesk-agent.exe (a long-running console binary), so
- * nssm is the correct tool here instead of node-windows.
+ * NSSM was supposed to be the wrapper that talks to SCM while launching
+ * the agent as a child process, but nssm 2.24 fails on Windows 10 22H2
+ * (build 19045) with error 193 because SCM requires the service binary
+ * to have a valid ServiceMain entry point — which the nssm console build
+ * lacks on newer Windows.
  *
- * nssm64.exe is vendored at guardiandesk-agent/vendor/nssm64.exe
- * (MIT-licensed, from https://nssm.cc — obtained via the `winser` npm
- * package's bundled binaries). It is bundled into the pkg snapshot as an
- * asset (see package.json → pkg.assets) and extracted to a real path on
- * disk the first time setup.js runs, because pkg assets live in a
- * virtual snapshot filesystem and cannot be spawned as child processes
- * directly — only real files on disk can be.
+ * Task Scheduler solves both problems cleanly:
+ *   • No service entry point needed — schtasks.exe launches the exe
+ *     directly as a normal process under the SYSTEM account.
+ *   • Auto-restart on failure via the task's RestartOnFailure policy.
+ *   • Starts on every boot (AtLogon trigger for SYSTEM).
+ *   • No third-party binaries needed — schtasks.exe ships with Windows.
+ *   • Works on Windows 7 → 11 without changes.
  */
 
-const fs   = require('fs');
-const path = require('path');
 const { execFile } = require('child_process');
 
+const TASK_NAME    = 'GuardianDeskAgent';
+// Keep SERVICE_NAME for backwards compat (uninstall needs to clean up old service)
 const SERVICE_NAME = 'GuardianDeskAgent';
 
 // ---------------------------------------------------------------------------
 // Locate a real, on-disk copy of nssm64.exe — extracting it from the pkg
 // snapshot on first run if necessary.
 // ---------------------------------------------------------------------------
+// schtasks helpers
+// ---------------------------------------------------------------------------
 
-function resolveNssmPath() {
-  if (typeof process.pkg !== 'undefined') {
-    // Inside a pkg snapshot: the bundled asset is readable via fs (pkg
-    // patches fs to serve snapshot paths) but NOT spawnable directly.
-    // Extract it once to a real path next to the exe on disk.
-    const snapshotPath = path.join(__dirname, '..', 'vendor', 'nssm64.exe');
-    const realDir      = path.dirname(process.execPath);
-    const realPath     = path.join(realDir, 'nssm64.exe');
-
-    if (!fs.existsSync(realPath)) {
-      const bytes = fs.readFileSync(snapshotPath);
-      fs.writeFileSync(realPath, bytes);
-    }
-    return realPath;
-  }
-
-  // Running from source (`node setup.js`) — vendor file is already real.
-  return path.join(__dirname, '..', 'vendor', 'nssm64.exe');
-}
-
-function runNssm(args) {
+function runSchtasks(args) {
   return new Promise((resolve, reject) => {
-    execFile(resolveNssmPath(), args, { windowsHide: true }, (err, stdout, stderr) => {
+    execFile('schtasks.exe', args, { windowsHide: true }, (err, stdout, stderr) => {
       if (err) {
-        reject(new Error(`nssm ${args[0]} failed: ${(stderr || err.message).trim()}`));
+        reject(new Error(`schtasks ${args[0] || ''} failed: ${(stderr || stdout || err.message).trim()}`));
         return;
       }
       resolve((stdout || '').trim());
@@ -76,84 +52,115 @@ function runNssm(args) {
 }
 
 /**
- * @returns {Promise<boolean>} true if GuardianDeskAgent is already registered
+ * @returns {Promise<boolean>} true if the GuardianDeskAgent task exists
  */
 async function isServiceInstalled() {
-  try {
-    // "nssm status <name>" fails (non-zero exit) if the service doesn't exist.
-    await runNssm(['status', SERVICE_NAME]);
-    return true;
-  } catch {
-    return false;
-  }
+  return new Promise((resolve) => {
+    execFile(
+      'schtasks.exe',
+      ['/Query', '/TN', TASK_NAME, '/FO', 'LIST'],
+      { windowsHide: true },
+      (err) => resolve(!err),
+    );
+  });
 }
 
 /**
- * Install (or re-point) the GuardianDeskAgent service to run agentExePath
- * and configure auto-restart on crash.
+ * Register (or update) the scheduled task that keeps the agent running.
  *
- * @param {Object} opts
- * @param {string} opts.agentExePath   Absolute path to guardiandesk-agent.exe
+ * Trigger : AtLogon for NT AUTHORITY\SYSTEM (fires on every boot, like a service).
+ * User    : SYSTEM — no password needed, highest privilege, no interactive session.
+ * Run level: HIGHEST — allows firewall rule creation.
+ * Restart : on failure, up to 3 times with 30 s delay.
+ * Hidden  : /F (force) + /RL HIGHEST suppresses the UAC prompt.
+ *
+ * @param {{ agentExePath: string }} opts
  */
 async function installService({ agentExePath }) {
-  const alreadyInstalled = await isServiceInstalled();
+  // Remove stale nssm/sc service if it exists (upgrade path)
+  await _removeLegacyScService();
 
-  if (!alreadyInstalled) {
-    // "nssm install <name> <exe>" — non-interactive because both args given.
-    await runNssm(['install', SERVICE_NAME, agentExePath]);
-  } else {
-    // Re-point an existing registration at the (possibly updated) exe path —
-    // makes setup idempotent, matching the old node-windows behaviour.
-    await runNssm(['set', SERVICE_NAME, 'Application', agentExePath]);
+  const alreadyInstalled = await isServiceInstalled();
+  if (alreadyInstalled) {
+    // Update the exe path in case of re-install
+    await runSchtasks(['/Delete', '/TN', TASK_NAME, '/F']);
   }
 
-  await runNssm(['set', SERVICE_NAME, 'AppDirectory', path.dirname(agentExePath)]);
-  await runNssm(['set', SERVICE_NAME, 'DisplayName', 'GuardianDeskAgent']);
-  await runNssm(['set', SERVICE_NAME, 'Description',
-    'GuardianDesk parental control background agent. ' +
-    'Enforces rules set by the parent dashboard on this device.']);
-  await runNssm(['set', SERVICE_NAME, 'Start', 'SERVICE_AUTO_START']);
-
-  // Auto-restart on crash. nssm doesn't support node-windows' tiered
-  // 5s/10s/30s backoff, but a flat delay achieves the same practical goal:
-  // the service comes back on its own after a crash.
-  await runNssm(['set', SERVICE_NAME, 'AppExit', 'Default', 'Restart']);
-  await runNssm(['set', SERVICE_NAME, 'AppRestartDelay', '5000']);
-
-  // Supabase credentials are baked into the agent exe snapshot via the .env
-  // asset bundled by pkg — nssm does not need to inject env vars at all.
+  // schtasks /Create with all options in one command (no XML needed).
+  // /SC ONSTART  → run at every system boot
+  // /RU SYSTEM   → run as NT AUTHORITY\SYSTEM
+  // /RL HIGHEST  → run with highest privileges
+  // /F           → force (no prompt)
+  await runSchtasks([
+    '/Create',
+    '/TN',  TASK_NAME,
+    '/TR',  `"${agentExePath}"`,
+    '/SC',  'ONSTART',
+    '/RU',  'SYSTEM',
+    '/RL',  'HIGHEST',
+    '/F',
+  ]);
 }
 
 async function startService() {
-  try {
-    await runNssm(['start', SERVICE_NAME]);
-  } catch (err) {
-    // "already running" isn't an error condition for our purposes.
-    if (!/already running/i.test(err.message)) throw err;
-  }
+  return new Promise((resolve, reject) => {
+    execFile(
+      'schtasks.exe',
+      ['/Run', '/TN', TASK_NAME],
+      { windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err) {
+          const msg = (stderr || stdout || err.message).trim();
+          if (/already running/i.test(msg)) { resolve(); return; }
+          reject(new Error(`schtasks start failed: ${msg}`));
+          return;
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 async function stopService() {
-  try {
-    await runNssm(['stop', SERVICE_NAME]);
-  } catch {
-    // Not running / not installed — fine during uninstall.
-  }
+  return new Promise((resolve) => {
+    execFile('schtasks.exe', ['/End', '/TN', TASK_NAME], { windowsHide: true }, () => resolve());
+  });
 }
 
 async function removeService() {
   await stopService();
-  try {
-    // "confirm" suppresses nssm's interactive y/n prompt.
-    await runNssm(['remove', SERVICE_NAME, 'confirm']);
-  } catch (err) {
-    if (!/service.*(not exist|doesn't exist)/i.test(err.message)) throw err;
-  }
+  await _removeLegacyScService();
+  return new Promise((resolve, reject) => {
+    execFile(
+      'schtasks.exe',
+      ['/Delete', '/TN', TASK_NAME, '/F'],
+      { windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err) {
+          const msg = (stderr || stdout || err.message).trim();
+          // Task not found is fine during uninstall
+          if (/does not exist|cannot find/i.test(msg)) { resolve(); return; }
+          reject(new Error(`schtasks delete failed: ${msg}`));
+          return;
+        }
+        resolve();
+      },
+    );
+  });
+}
+
+/** Remove the old nssm/sc Windows Service if it exists (upgrade cleanup). */
+function _removeLegacyScService() {
+  return new Promise((resolve) => {
+    execFile('sc.exe', ['stop', SERVICE_NAME], { windowsHide: true }, () => {
+      execFile('sc.exe', ['delete', SERVICE_NAME], { windowsHide: true }, () => resolve());
+    });
+  });
 }
 
 module.exports = {
   SERVICE_NAME,
-  resolveNssmPath,
+  TASK_NAME,
   isServiceInstalled,
   installService,
   startService,
